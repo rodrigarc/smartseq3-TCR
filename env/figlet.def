@@ -1,5 +1,5 @@
 Bootstrap: docker
-From: ubuntu:16.04
+From: ubuntu:20.04
 
 IncludeCmd: yes
 
@@ -11,9 +11,9 @@ IncludeCmd: yes
     export PATH=/usr/games:$PATH
 
 %post
+    # Install figlet while ignoring security labeling errors
     apt-get update
     apt-get -y install figlet
-
 
 %labels
   Adapted from https://github.com/icaoberg/singularity-figlet/blob/master/Singularity
