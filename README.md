@@ -1,9 +1,13 @@
 # TCR extraction from Smart-seq3 sequencing data
-Pipeline for extracting TCR using [TraCeR](https://github.com/Teichlab/tracer) from Smart-seq3 sequencing data processed by [zUMIs](https://github.com/sdparekh/zUMIs).
+
+Pipeline for extracting TCR using [TraCeR](https://github.com/Teichlab/tracer) from Smart-seq3 sequencing data processed by [zUMIs](https://github.com/sdparekh/zUMIs). Additionally, a path for **BCR extraction** using [Trust4](https://github.com/zhangweizhong/Trust4) has been added.
+
 ### Requisites
+
 A HPC cluster running a version of Linux with [Singularity](https://sylabs.io/singularity/) installed.
 
 ### Expected directory structure (for 3 plates)
+
 ```bash
 ├── bin
 │   ├── data_functions.py
@@ -15,26 +19,27 @@ A HPC cluster running a version of Linux with [Singularity](https://sylabs.io/si
 │   │   ├── Plate_1
 │   │   │   ├── Plate_1.filtered.tagged.Aligned.out.bam
 │   │   │   ├── Plate_1.filtered.tagged.unmapped.bam
-│   │   │   └── Plate_1.barcodes.csv
+│   │   │   └── Plate_1.barcodes.csv
 │   │   ├── Plate_2
 │   │   │   ├── Plate_2.filtered.tagged.Aligned.out.bam
 │   │   │   ├── Plate_2.filtered.tagged.unmapped.bam
-│   │   │   └── Plate_2.barcodes.csv
+│   │   │   └── Plate_2.barcodes.csv
 │   │   └── Plate_3
 │   │   │   ├── Plate_3.filtered.tagged.Aligned.out.bam
 │   │   │   ├── Plate_3.filtered.tagged.unmapped.bam
-│   │   │   └── Plate_3.barcodes.csv
+│   │   │   └── Plate_3.barcodes.csv
 │   ├── 01_SS3_splitted_bams
 │   ├── 02_SS3_merged_fastq
 │   ├── 03_SS3_trimmed_fastq
 │   ├── 04_SS3_Tracer_assembled_cells
-│   └── 05_SS3_collected_TCRs
+│   ├── 05_SS3_collected_TCRs
+│   └── 05_SS3_trust4_assembled_cells  # BCR assembled cells from Trust4
 ├── env
 │   ├── 01_pysam_SS3.def
 │   ├── 02_samtools_SS3.def
 │   ├── 03_trimgalore_SS3.def
 │   ├── 04_tracer_SS3.def
-│   └── figlet.def
+│   └── 05_trust4_SS3.def  # Singularity definition for Trust4 BCR assembly
 ├── merge_plates_with_clonality.sh
 ├── README.md
 ├── results
@@ -44,26 +49,40 @@ A HPC cluster running a version of Linux with [Singularity](https://sylabs.io/si
     ├── 03_run_trim_galore.sh
     ├── 04_assemble_trimmed_cells.sh
     ├── 05_collect_assemble.py
-    └── 06_clonality_analysis.py
-
+    ├── 06_clonality_analysis.py
+    └── trust4_run.sh  # Script to run Trust4 BCR assembly
 ```
+
 # TL;DR
+
 1. Place the zUMIs output in the folder [`data/00_SS3_raw_data/`](data/00_SS3_raw_data/) named as the plate (`Plate_1` for example). Make sure that the following 3 files are in the plate subfolder:
-  1.1 Bam file for aligned reads, named `Plate_1.filtered.tagged.Aligned.out.bam`.
-  1.2 Bam file for unmapped reads, named `Plate_1.filtered.tagged.unmapped.bam`.
-  1.3 Barcodes per cell in `.csv` format named `Plate_1.barcodes.csv`.
+   1.1 Bam file for aligned reads, named `Plate_1.filtered.tagged.Aligned.out.bam`.
+   1.2 Bam file for unmapped reads, named `Plate_1.filtered.tagged.unmapped.bam`.
+   1.3 Barcodes per cell in `.csv` format named `Plate_1.barcodes.csv`.
 2. Run the pipeline as follows
+
 ```bash
 ./complete_pipeline.sh Plate_1
 ```
+
 for all the existing plates. The TCR dataset will be saved in [`data/05_SS3_collected_TCRs/`](data/05_SS3_collected_TCRs/), in a folder named as the plate.
 
 Optional: Specify the number of nodes for parallel execution after the plate name. By default it will run on 10 nodes.
 
-3. Once the pipeline has been run for the desired plates, to **merge them and calculate the clones and their frequency**, run:
+3. For **BCR assembly**, run Trust4 using:
+
+```bash
+./trust4_run.sh Plate_1
+```
+
+The BCR dataset will be saved in [`data/05_SS3_trust4_assembled_cells/`](data/05_SS3_trust4_assembled_cells/), in a folder named as the plate.
+
+4. Once the pipeline has been run for the desired plates, to **merge TCR datasets and calculate clones and their frequency**, run:
+
 ```bash
 ./merge_plates_with_clonality.sh
 ```
+
 This will save the clonality dataset in [`results/`](results/)`TCR_clonality.tsv`
 
 Optional: To change the output name, use the flag `--out_file` and the path to the output file in `.csv`. `.tsv` or `.xlsx` format. To specify another input directory, use the flag `--input_dir`.
