@@ -2,154 +2,143 @@
 # ============================================================================ #
 # complete_pipeline.sh                                                         #
 # Author: Juan Sebastian Diaz Boada                                            #
-# Creation Date: 21/12/2022                                                    #
+# Edited by: Rodrigo Arcoverde                                                #
 # ============================================================================ #
-# Handling incomplete parameters
-if [ $# -lt 1 ]; then
-  echo "Error: No plate name was given." >&2
-  exit 1
-fi
-# Define the help function
+
+# Help function
 function help {
-  # Print the usage message
-  echo "Usage: $0 [PLATE_NAME][NODES]"
-  echo "Runs the Smart-seq3 TCR extraction pipeline on a the sequencing data of a plate."
-  echo "A wrapper of Pysam, samtools, TrimGalore and TraCeR"
-  echo "This script assumes the existence of a directory structure as in the repo"
-  echo "https://github.com/scReumaKI/smartseq3-TCR"
-  echo "and the existence of the singularity container images (.sif)."
+  echo "Usage: $0 [OPTIONS] PLATE_NAME [NODES]"
   echo ""
-  # Print a description of the script's parameters
-  echo "Parameters:"
-  echo "  PLATE_NAME     Name of the plate as prefix of sequencing files and folder names."
-  echo "  NODES          Number of nodes to use in parallel computations. Defaults to 10."
+  echo "Runs the Smart-seq3 TCR extraction pipeline for a given plate."
+  echo "Assumes directory structure from https://github.com/scReumaKI/smartseq3-TCR"
   echo ""
-  # Print the list of options
+  echo "Positional arguments:"
+  echo "  PLATE_NAME               Name of the plate (prefix for input files/folders)."
+  echo "  NODES                    Number of parallel jobs to use (default: 10)"
+  echo ""
   echo "Options:"
-  echo "  -h, --help        display this help and exit"
-  # Exit with a success status code
+  echo "  --stop-before-tracer     Run up to adapter trimming, then stop (skip TraCeR)."
+  echo "  -h, --help                Show this help message and exit."
   exit 0
 }
-# Parse the options and arguments
-if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
-  help
-fi
-PLATE_NAME=$1
-shift
-NODES=${1:-10}
-echo "Nodes = $NODES"
-# Handling missing data
-if [ ! -d data/00_SS3_raw_data/${PLATE_NAME}/ ];then
-  echo "There is no raw data for plate ${PLATE_NAME} in data/00_SS3_raw_data/" >&2
+
+# Default values
+STOP_BEFORE_TRACER=false
+
+# Parse options
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --stop-before-tracer)
+      STOP_BEFORE_TRACER=true
+      shift
+      ;;
+    -h|--help)
+      help
+      ;;
+    -*)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
+    *)
+      POSITIONAL+=("$1")
+      shift
+      ;;
+  esac
+done
+
+# Restore positional parameters
+set -- "${POSITIONAL[@]}"
+
+# Handle required positional arguments
+if [ $# -lt 1 ]; then
+  echo "Error: PLATE_NAME not provided." >&2
   exit 1
 fi
+
+PLATE_NAME=$1
+NODES=${2:-10}
+echo "Nodes = $NODES"
+
 # ---------------------------------------------------------------------------- #
-# 00. Container building
-if [ ! -f env/figlet.sif ];then
-  singularity build --fakeroot env/figlet.sif env/figlet.def
-  echo "Built env/figlet.sif singularity container."
-else
-  echo "Container env/figlet.sif already exists. Using existing image..."
+# Input validation
+if [ ! -d data/00_SS3_raw_data/${PLATE_NAME}/ ]; then
+  echo "Error: No raw data found for plate '${PLATE_NAME}'." >&2
+  exit 1
 fi
+
+# ---------------------------------------------------------------------------- #
+# 00. Container setup
 echo "================================================================================="
 ./env/figlet.sif "0. Singularity"
 echo "================================================================================="
-if [ ! -f env/01_pysam_SS3.sif ];then
-  singularity build --fakeroot env/01_pysam_SS3.sif env/01_pysam_SS3.def
-  echo "Built env/01_pysam_SS3.sif singularity container."
-else
-  echo "Container env/01_pysam_SS3.sif already exists. Using existing image..."
-fi
-if [ ! -f env/02_samtools_SS3.sif ];then
-  singularity build --fakeroot env/02_samtools_SS3.sif env/02_samtools_SS3.def
-  echo "Built env/02_samtools_SS3.sif singularity container."
-else
-  echo "Container env/02_samtools_SS3.sif already exists. Using existing image..."
-fi
-if [ ! -f env/03_trimgalore_SS3.sif ];then
-  singularity build --fakeroot env/03_trimgalore_SS3.sif env/03_trimgalore_SS3.def
-  echo "Built env/03_trimgalore_SS3.sif singularity container."
-else
-  echo "Container env/03_trimgalore_SS3.sif already exists. Using existing image..."
-fi
-if [ ! -f env/04_tracer_SS3.sif ];then
-  singularity build --fakeroot env/04_tracer_SS3.sif env/04_tracer_SS3.def
-  echo "Built env/04_tracer_SS3.sif singularity container."
-else
-  echo "Container env/04_tracer_SS3.sif already exists. Using existing image..."
-fi
+
+for container in figlet 01_pysam_SS3 02_samtools_SS3 03_trimgalore_SS3; do
+  if [ ! -f env/${container}.sif ]; then
+    singularity build --fakeroot env/${container}.sif env/${container}.def
+    echo "Built env/${container}.sif"
+  else
+    echo "Using existing container: env/${container}.sif"
+  fi
+done
+
 # ---------------------------------------------------------------------------- #
-# 01. SPLIT BAM files
+# 01. Split BAM files
 echo "================================================================================="
 ./env/figlet.sif "1. Pysam"
 echo "================================================================================="
-# Split Aligned reads file
-if [ ! -d data/01_SS3_splitted_bams/${PLATE_NAME}/Aligned/ ];then
-  mkdir -p data/01_SS3_splitted_bams/${PLATE_NAME}/Aligned/
-  echo "Created folder for Aligned reads"
-fi
+
+mkdir -p data/01_SS3_splitted_bams/${PLATE_NAME}/Aligned/
+mkdir -p data/01_SS3_splitted_bams/${PLATE_NAME}/unmapped/
+
 ./env/01_pysam_SS3.sif \
-data/00_SS3_raw_data/${PLATE_NAME}/${PLATE_NAME}.filtered.tagged.Aligned.out.bam \
+data/00_SS3_raw_data/${PLATE_NAME}/${PLATE_NAME}.Xpress.filtered.Aligned.GeneTagged.UBcorrected.sorted.bam \
 data/00_SS3_raw_data/${PLATE_NAME}/${PLATE_NAME}.barcodes.csv \
-data/01_SS3_splitted_bams/${PLATE_NAME}/Aligned/ \
---condition_tag_col Barcode --condition_name_col Name --bam_tag_flag BC
-# Split unmapped reads file
-if [ ! -d data/01_SS3_splitted_bams/${PLATE_NAME}/unmapped/ ];then
-  mkdir -p data/01_SS3_splitted_bams/${PLATE_NAME}/unmapped/
-  echo "Created folder for unmapped reads"
-fi
+data/01_SS3_splitted_bams/${PLATE_NAME}/Aligned/ 
+
 ./env/01_pysam_SS3.sif \
-data/00_SS3_raw_data/${PLATE_NAME}/${PLATE_NAME}.filtered.tagged.unmapped.bam \
+data/00_SS3_raw_data/${PLATE_NAME}/${PLATE_NAME}.Xpress.filtered.tagged.unmapped.bam \
 data/00_SS3_raw_data/${PLATE_NAME}/${PLATE_NAME}.barcodes.csv \
-data/01_SS3_splitted_bams/${PLATE_NAME}/unmapped/ \
---condition_tag_col Barcode --condition_name_col Name --bam_tag_flag BC
+data/01_SS3_splitted_bams/${PLATE_NAME}/unmapped/ 
+
 # ---------------------------------------------------------------------------- #
-# 01. Translate and merge
+# 02. Merge and convert to fastq
 echo "================================================================================="
 ./env/figlet.sif "2. Samtools"
 echo "================================================================================="
-if [ ! -d data/02_SS3_merged_fastq/${PLATE_NAME}/ ];then
-  mkdir -p data/02_SS3_merged_fastq/${PLATE_NAME}/
-fi
-./env/02_samtools_SS3.sif data/01_SS3_splitted_bams/${PLATE_NAME}/ \
+
+mkdir -p data/02_SS3_merged_fastq/${PLATE_NAME}/
+
+./env/02_samtools_SS3.sif \
+data/01_SS3_splitted_bams/${PLATE_NAME}/ \
 data/02_SS3_merged_fastq/${PLATE_NAME}/ $NODES
+
 # ---------------------------------------------------------------------------- #
-# 02. Trim adapters
+# 03. Trim adapters
 echo "================================================================================="
 ./env/figlet.sif "3. TrimGalore!"
 echo "================================================================================="
-if [ ! -d data/03_SS3_trimmed_fastq/${PLATE_NAME}/ ];then
-  mkdir -p data/03_SS3_trimmed_fastq/${PLATE_NAME}/
-fi
-./env/03_trimgalore_SS3.sif data/02_SS3_merged_fastq/${PLATE_NAME}/ \
+
+mkdir -p data/03_SS3_trimmed_fastq/${PLATE_NAME}/
+
+./env/03_trimgalore_SS3.sif \
+data/02_SS3_merged_fastq/${PLATE_NAME}/ \
 data/03_SS3_trimmed_fastq/${PLATE_NAME}/ 8
+
 # ---------------------------------------------------------------------------- #
-# 03. TCR assemble
-echo "================================================================================="
-./env/figlet.sif "4. TraCeR"
-echo "================================================================================="
-# Assemble alpha-beta
-if [ ! -d data/04_SS3_Tracer_assembled_cells/${PLATE_NAME}/AB/ ];then
-  mkdir -p data/04_SS3_Tracer_assembled_cells/${PLATE_NAME}/AB/
-  echo "Created folder for AB TCRs"
+# Optional: Exit early if user wants to skip TraCeR
+if [ "$STOP_BEFORE_TRACER" = true ]; then
+  echo "================================================================================="
+  ./env/figlet.sif "Done: Stopped before TraCeR"
+  echo "================================================================================="
+  exit 0
 fi
-./env/04_tracer_SS3.sif data/03_SS3_trimmed_fastq/${PLATE_NAME}/ \
-data/04_SS3_Tracer_assembled_cells/${PLATE_NAME}/AB $NODES 'AB'
-# Assemble gamma-delta
-if [ ! -d data/04_SS3_Tracer_assembled_cells/${PLATE_NAME}/GD/ ];then
-  mkdir -p data/04_SS3_Tracer_assembled_cells/${PLATE_NAME}/GD/
-  echo "Created folder for GD TCRs"
-fi
-./env/04_tracer_SS3.sif data/03_SS3_trimmed_fastq/${PLATE_NAME}/ \
-data/04_SS3_Tracer_assembled_cells/${PLATE_NAME}/GD $NODES 'GD'
+
 # ---------------------------------------------------------------------------- #
-# 04. TCR collection
+# Future steps (TraCeR + collection)
 echo "================================================================================="
-./env/figlet.sif "5. TCR collection"
+./env/figlet.sif "4. TraCeR + downstream (not implemented here)"
 echo "================================================================================="
-if [ ! -d data/05_SS3_collected_TCRs/${PLATE_NAME}/ ];then
-  mkdir -p data/05_SS3_collected_TCRs/${PLATE_NAME}/
-fi
-singularity exec env/01_pysam_SS3.sif ./src/05_collect_assemble.py \
-data/04_SS3_Tracer_assembled_cells/${PLATE_NAME}/ \
-data/05_SS3_collected_TCRs/${PLATE_NAME}/${PLATE_NAME}.tsv
+# Add TraCeR and analysis steps below here if needed in future
+
+
